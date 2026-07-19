@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JsonConverter</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
 <style>
   /* Family design tokens (shared across all the tools) */
   :root {
@@ -226,11 +228,108 @@
 
 const renderers = [
   {
+    name: "Marginalia",
+    detect: function (json) {
+      const first = firstItem(json, "entries");
+      return first !== null && "author" in first && "source" in first;
+    },
+    render: renderMarginalia,
+  },
+  {
+    name: "Prediction Ledger",
+    detect: function (json) {
+      return isPlainObject(json) && Array.isArray(json.predictions);
+    },
+    render: renderPredictions,
+  },
+  {
+    name: "Worry Ledger",
+    detect: function (json) {
+      return isPlainObject(json) && Array.isArray(json.worries);
+    },
+    render: renderWorries,
+  },
+  {
+    name: "Someday Lease",
+    detect: function (json) {
+      const first = firstItem(json, "items");
+      return first !== null && ("leaseEnd" in first || "leaseMonths" in first);
+    },
+    render: renderSomedayLease,
+  },
+  {
+    name: "Decision",
+    detect: function (json) {
+      return isPlainObject(json) && typeof json.question === "string" &&
+        Array.isArray(json.factors);
+    },
+    render: renderDecision,
+  },
+  {
+    name: "Niggle Log",
+    detect: function (json) {
+      const first = firstItem(json, "entries");
+      if (first !== null && "region" in first && "kind" in first) return true;
+      return isPlainObject(json) && Array.isArray(json.dismissals);
+    },
+    render: renderNiggleLog,
+  },
+  {
+    name: "LevelUp",
+    detect: function (json) {
+      const first = firstItem(json, "entries");
+      return first !== null && "conditions" in first && "dateISO" in first;
+    },
+    render: renderLevelUp,
+  },
+  {
+    name: "Skill Tree",
+    detect: function (json) {
+      const first = firstItem(json, "trees");
+      return first !== null && Array.isArray(first.nodes);
+    },
+    render: renderSkillTree,
+  },
+  {
     name: "Generic fallback",
     detect: function () { return true; },
     render: renderGeneric,
   },
 ];
+
+/* ============================================================
+   Helpers shared by the specific renderers.
+   ============================================================ */
+
+/* First element of a top-level array field, if it is an object.
+   Detection fingerprints look at this element's keys. */
+function firstItem(json, key) {
+  if (!isPlainObject(json) || !Array.isArray(json[key]) || json[key].length === 0) return null;
+  return isPlainObject(json[key][0]) ? json[key][0] : null;
+}
+
+/* "2026-07-12T18:12:45.586Z" becomes "2026-07-12";
+   date-only strings pass through unchanged */
+function dateOnly(value) {
+  if (typeof value !== "string") return "";
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T/);
+  return match ? match[1] : value;
+}
+
+/* The value as a trimmed string, or "" when it is not a string */
+function str(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/* Enum values like "didntHappen" or "upper_back" become plain words */
+const ENUM_WORDS = { didntHappen: "didn't happen" };
+function words(value) {
+  if (typeof value !== "string") return "";
+  if (ENUM_WORDS[value]) return ENUM_WORDS[value];
+  return value
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, function (m, a, b) { return a + " " + b.toLowerCase(); });
+}
 
 /* ============================================================
    Generic renderer.
@@ -480,6 +579,254 @@ function renderGeneric(json) {
   if (sections.length > 0) parts.push(sections.join("\n\n"));
   if (parts.length === 0) return "(nothing to show: the file contains no renderable values)";
   return parts.join("\n\n") + "\n";
+}
+
+/* ============================================================
+   Specific renderers, one per known schema (see the registry).
+   All of them read fields only if present and never assume a
+   field exists; a missing field becomes an omitted line.
+   Bookkeeping fields (ids, counters, timestamps like created
+   and modified) and tags are left out on purpose.
+   ============================================================ */
+
+function renderMarginalia(json) {
+  const lines = ["# Marginalia"];
+  json.entries.filter(isPlainObject).forEach(function (entry) {
+    lines.push("");
+    const text = str(entry.text);
+    if (text) {
+      text.split("\n").forEach(function (l) { lines.push("> " + l); });
+    }
+    let attribution = str(entry.author);
+    const source = str(entry.source);
+    if (source) attribution += (attribution ? " — " : "") + "*" + source + "*";
+    const location = str(entry.location);
+    if (location) attribution += (attribution ? ", " : "") + location;
+    if (entry.status === "retired") attribution += (attribution ? " " : "") + "(retired)";
+    if (attribution) {
+      if (text) lines.push("");
+      lines.push("— " + attribution);
+    }
+    const thought = str(entry.thought);
+    if (thought) {
+      lines.push("");
+      lines.push(thought);
+    }
+  });
+  return lines.join("\n") + "\n";
+}
+
+function renderPredictions(json) {
+  const all = json.predictions.filter(isPlainObject);
+  const open = all.filter(function (p) { return !isPlainObject(p.resolution); });
+  const resolved = all.filter(function (p) { return isPlainObject(p.resolution); });
+  const lines = ["# Prediction Ledger"];
+
+  function predictionBlock(p) {
+    lines.push("");
+    lines.push("### " + (str(p.statement) || "(no statement)"));
+    lines.push("");
+    if (typeof p.confidence === "number") lines.push("- Confidence: " + p.confidence + "%");
+    if (str(p.resolveBy)) lines.push("- Resolve by: " + dateOnly(p.resolveBy));
+    if (str(p.category)) lines.push("- Category: " + str(p.category));
+    const res = isPlainObject(p.resolution) ? p.resolution : null;
+    if (res) {
+      if (str(res.outcome)) lines.push("- Outcome: " + words(res.outcome));
+      if (str(res.resolvedOn)) lines.push("- Resolved on: " + dateOnly(res.resolvedOn));
+    }
+    if (str(p.notes)) { lines.push(""); lines.push(str(p.notes)); }
+    if (res && str(res.notes)) { lines.push(""); lines.push(str(res.notes)); }
+  }
+
+  if (open.length > 0) { lines.push(""); lines.push("## Open"); open.forEach(predictionBlock); }
+  if (resolved.length > 0) { lines.push(""); lines.push("## Resolved"); resolved.forEach(predictionBlock); }
+  return lines.join("\n") + "\n";
+}
+
+function renderWorries(json) {
+  const all = json.worries.filter(isPlainObject);
+  const open = all.filter(function (w) { return !isPlainObject(w.resolution); });
+  const resolved = all.filter(function (w) { return isPlainObject(w.resolution); });
+  const lines = ["# Worry Ledger"];
+
+  function worryBlock(w) {
+    lines.push("");
+    lines.push("### " + (str(w.text) || "(no text)"));
+    lines.push("");
+    if (typeof w.dread === "number") lines.push("- Dread: " + w.dread + " of 5");
+    if (str(w.checkIn)) lines.push("- Check in: " + dateOnly(w.checkIn));
+    if (str(w.category)) lines.push("- Category: " + str(w.category));
+    const res = isPlainObject(w.resolution) ? w.resolution : null;
+    if (res) {
+      if (str(res.outcome)) lines.push("- Outcome: " + words(res.outcome));
+      if (res.outcome === "happened" && typeof res.actualSeverity === "number") {
+        const dread = typeof w.dread === "number" ? w.dread + " of 5" : "not recorded";
+        lines.push("- Actual severity: " + res.actualSeverity + " of 5 (dread was " + dread + ")");
+      }
+      if (str(res.resolvedOn)) lines.push("- Resolved on: " + dateOnly(res.resolvedOn));
+    }
+    if (str(w.notes)) { lines.push(""); lines.push(str(w.notes)); }
+    if (res && str(res.reflection)) { lines.push(""); lines.push(str(res.reflection)); }
+  }
+
+  if (open.length > 0) { lines.push(""); lines.push("## Open"); open.forEach(worryBlock); }
+  if (resolved.length > 0) { lines.push(""); lines.push("## Resolved"); resolved.forEach(worryBlock); }
+  return lines.join("\n") + "\n";
+}
+
+function renderSomedayLease(json) {
+  const lines = ["# Someday Lease"];
+  json.items.filter(isPlainObject).forEach(function (item) {
+    const closed = item.status === "closed";
+    lines.push("");
+    lines.push("## " + (str(item.title) || "(untitled)") + (closed ? " (closed)" : ""));
+    if (str(item.why)) { lines.push(""); lines.push(str(item.why)); }
+    lines.push("");
+    const leaseParts = [];
+    if (typeof item.leaseMonths === "number") {
+      leaseParts.push(item.leaseMonths + (item.leaseMonths === 1 ? " month" : " months"));
+    }
+    if (str(item.leaseEnd)) leaseParts.push("ends " + dateOnly(item.leaseEnd));
+    if (leaseParts.length > 0) lines.push("- Lease: " + leaseParts.join(", "));
+    if (str(item.category)) lines.push("- Category: " + str(item.category));
+    const renewals = Array.isArray(item.renewals) ? item.renewals.length
+      : (typeof item.renewals === "number" ? item.renewals : 0);
+    if (renewals > 0) lines.push("- Renewals: " + renewals);
+    if (closed && str(item.closedOn)) lines.push("- Closed on: " + dateOnly(item.closedOn));
+    if (closed && str(item.closingNote)) { lines.push(""); lines.push(str(item.closingNote)); }
+  });
+  return lines.join("\n") + "\n";
+}
+
+function renderDecision(json) {
+  const lines = ["# " + (str(json.question) || "Decision")];
+  const factors = json.factors.filter(isPlainObject);
+  if (factors.length > 0) {
+    /* The Notes column only appears when some factor has notes */
+    const hasNotes = factors.some(function (f) { return str(f.notes) !== ""; });
+    lines.push("");
+    lines.push("| Factor | Direction | Weight | Confidence |" + (hasNotes ? " Notes |" : ""));
+    lines.push("| --- | --- | --- | --- |" + (hasNotes ? " --- |" : ""));
+    factors.forEach(function (f) {
+      const direction = f.direction === "for" ? "For"
+        : f.direction === "against" ? "Against" : tableCell(f.direction);
+      let row = "| " + tableCell(f.name) + " | " + direction + " | " +
+        tableCell(f.weight) + " | " + tableCell(f.confidence) + " |";
+      if (hasNotes) row += " " + tableCell(f.notes) + " |";
+      lines.push(row);
+    });
+  }
+  /* snapshots are ignored in v2 (empty in all known exports) */
+  return lines.join("\n") + "\n";
+}
+
+function renderNiggleLog(json) {
+  const lines = ["# Niggle Log"];
+
+  const entries = (Array.isArray(json.entries) ? json.entries : [])
+    .filter(isPlainObject)
+    .slice()
+    .sort(function (a, b) { return str(b.occurredOn).localeCompare(str(a.occurredOn)); });
+  if (entries.length > 0) {
+    lines.push("");
+    entries.forEach(function (e) {
+      const parts = [];
+      if (str(e.occurredOn)) parts.push("**" + dateOnly(e.occurredOn) + "**");
+      if (str(e.kind) && e.kind !== "niggle") parts.push(words(e.kind));
+      let site = [words(str(e.side)), words(str(e.region))].filter(Boolean).join(" ");
+      if (str(e.subsite)) site += (site ? " (" + words(e.subsite) + ")" : words(e.subsite));
+      if (site) parts.push(site);
+      if (str(e.sensation)) parts.push(words(e.sensation));
+      if (typeof e.severity === "number") parts.push("severity " + e.severity);
+      if (Array.isArray(e.contexts) && e.contexts.length > 0) {
+        const contexts = e.contexts.filter(function (c) { return str(c) !== ""; }).map(words);
+        if (contexts.length > 0) parts.push(contexts.join(", "));
+      }
+      if (str(e.note)) parts.push(str(e.note).replace(/\n/g, " "));
+      if (parts.length > 0) lines.push("- " + parts.join(" — "));
+    });
+  }
+
+  const dismissals = (Array.isArray(json.dismissals) ? json.dismissals : []).filter(isPlainObject);
+  if (dismissals.length > 0) {
+    lines.push("");
+    lines.push("## Dismissals");
+    lines.push("");
+    dismissals.forEach(function (d) {
+      const parts = [];
+      const site = str(d.siteKey).split(":").map(words).filter(Boolean).join(", ");
+      if (site) parts.push(site);
+      if (str(d.rule)) parts.push("rule: " + words(d.rule));
+      if (str(d.dismissedOn)) parts.push("dismissed " + dateOnly(d.dismissedOn));
+      if (typeof d.severityAtDismissal === "number") {
+        parts.push("severity " + d.severityAtDismissal + " at dismissal");
+      }
+      if (parts.length > 0) lines.push("- " + parts.join(" — "));
+    });
+  }
+
+  /* Sessions were empty in all known exports; if they ever appear,
+     show them with the generic nested-list treatment */
+  const sessions = (Array.isArray(json.sessions) ? json.sessions : [])
+    .filter(function (s) { return !isEmpty(s); });
+  if (sessions.length > 0) {
+    lines.push("");
+    lines.push("## Sessions");
+    lines.push("");
+    lines.push(nestedList(sessions, 2, 0).join("\n"));
+  }
+
+  return lines.join("\n") + "\n";
+}
+
+function renderLevelUp(json) {
+  const lines = ["# LevelUp", ""];
+  json.entries.filter(isPlainObject)
+    .slice()
+    .sort(function (a, b) { return str(a.dateISO).localeCompare(str(b.dateISO)); })
+    .forEach(function (e) {
+      const parts = [];
+      if (str(e.dateISO)) parts.push("**" + dateOnly(e.dateISO) + "**");
+      if (str(e.category)) parts.push(str(e.category));
+      if (Array.isArray(e.conditions) && e.conditions.length > 0) {
+        const conditions = e.conditions.filter(function (c) { return str(c) !== ""; });
+        if (conditions.length > 0) parts.push(conditions.join(", "));
+      }
+      if (str(e.note)) parts.push(str(e.note).replace(/\n/g, " "));
+      if (parts.length > 0) lines.push("- " + parts.join(" — "));
+    });
+  return lines.join("\n") + "\n";
+}
+
+function renderSkillTree(json) {
+  const blocks = [];
+  json.trees.filter(isPlainObject).forEach(function (tree) {
+    const lines = ["# " + (str(tree.name) || "Skill tree")];
+    const nodes = (Array.isArray(tree.nodes) ? tree.nodes : []).filter(isPlainObject);
+    /* id-to-name map so prerequisites read as names, not ids;
+       unresolvable ids are silently skipped */
+    const nameById = {};
+    nodes.forEach(function (n) {
+      if (str(n.id) && str(n.name)) nameById[n.id] = str(n.name);
+    });
+    if (nodes.length > 0) lines.push("");
+    nodes.forEach(function (n) {
+      const done = str(n.completedOn) !== "";
+      let line = "- [" + (done ? "x" : " ") + "] " + (str(n.name) || "(unnamed)");
+      if (done) line += " (" + dateOnly(n.completedOn) + ")";
+      if (n.milestone === true) line += " ★";
+      lines.push(line);
+      if (str(n.description)) lines.push("  - " + str(n.description).replace(/\n/g, " "));
+      const prereqs = (Array.isArray(n.prereqIds) ? n.prereqIds : [])
+        .map(function (id) { return nameById[id]; })
+        .filter(Boolean);
+      if (prereqs.length > 0) lines.push("  - requires: " + prereqs.join(", "));
+      if (str(n.notes)) lines.push("  - " + str(n.notes).replace(/\n/g, " "));
+    });
+    blocks.push(lines.join("\n"));
+  });
+  if (blocks.length === 0) return "# Skill Tree\n";
+  return blocks.join("\n\n") + "\n";
 }
 
 /* ============================================================

@@ -14,4 +14,4 @@ Everything happens in your browser. The file is never uploaded anywhere: there i
 
 ## Running it
 
-It is a single `index.html` file with no dependencies. Open it in any modern browser, or visit the GitHub Pages site for this repository.
+Everything lives in a single `index.html` file with no dependencies (plus the app icon). Open it in any modern browser, or visit the GitHub Pages site for this repository.
