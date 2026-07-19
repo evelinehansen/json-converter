@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JsonConverter</title>
+<style>
+  /* Family design tokens (shared across all the tools) */
+  :root {
+    --bg: #FAFAF7;
+    --card: #FFFFFF;
+    --ink: #262A21;
+    --ink-soft: #6D7263;
+    --ink-faint: #9A9E90;
+
+    --sage: #647F5E;
+    --sage-deep: #4C6447;
+    --sage-tint: #ECF1E9;
+
+    --clay: #B96F4E;
+    --clay-deep: #97572F;
+    --clay-tint: #F7EBE3;
+
+    --line: #E7E5DA;
+    --track: #EDECE2;
+
+    --radius: 16px;
+    --shadow: 0 10px 30px rgba(44, 48, 36, 0.08);
+    --spring: cubic-bezier(0.32, 1.3, 0.5, 1);
+
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--ink);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 3rem;
+  }
+
+  /* Header: family wordmark, second word in sage */
+  .app-title {
+    font-weight: 800;
+    font-size: 1.5rem;
+    letter-spacing: -0.01em;
+  }
+  .app-title-accent { color: var(--sage); }
+  .tagline {
+    color: var(--ink-soft);
+    font-size: 0.95rem;
+    margin-top: 0.15rem;
+  }
+
+  /* Drop zone */
+  .dropzone {
+    margin-top: 1.5rem;
+    background: var(--card);
+    border: 2px dashed var(--line);
+    border-radius: var(--radius);
+    padding: 2rem 1.25rem;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .dropzone:hover { border-color: var(--ink-faint); }
+  .dropzone.dragging {
+    border-color: var(--sage);
+    background: var(--sage-tint);
+  }
+  .dropzone-title { font-weight: 600; font-size: 1rem; }
+  .dropzone-hint { color: var(--ink-soft); font-size: 0.9rem; margin-top: 0.25rem; }
+  .dropzone-privacy { color: var(--ink-faint); font-size: 0.85rem; margin-top: 0.75rem; }
+
+  /* Buttons (family pill recipe) */
+  .btn {
+    font: inherit; font-weight: 600; font-size: 0.9rem;
+    color: var(--ink); background: var(--card);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: 0.5rem 1rem; min-height: 44px; cursor: pointer;
+    transition: background 0.2s, border-color 0.2s,
+                transform 0.25s var(--spring), box-shadow 0.25s;
+  }
+  .btn:hover { border-color: var(--ink-faint); }
+  .btn:active { transform: scale(0.97); }
+  .btn.primary { background: var(--sage); border-color: var(--sage); color: #FFFFFF; }
+  .btn.primary:hover { background: var(--sage-deep); border-color: var(--sage-deep); }
+
+  /* Error notice */
+  .error {
+    margin-top: 1.25rem;
+    background: var(--clay-tint);
+    border: 1px solid var(--clay);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    color: var(--clay-deep);
+    font-size: 0.95rem;
+  }
+
+  /* Result area */
+  .result { margin-top: 1.25rem; }
+
+  .badge-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-block;
+    background: var(--sage-tint);
+    border: 1px solid var(--sage);
+    color: var(--sage-deep);
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.35rem 0.9rem;
+  }
+  .badge-file {
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+  .notice {
+    margin-top: 0.75rem;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+  }
+
+  .output-card {
+    margin-top: 1rem;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1rem;
+  }
+  .toolbar {
+    display: flex;
+    gap: 0.6rem;
+    margin-bottom: 0.9rem;
+  }
+  #output {
+    display: block;
+    width: 100%;
+    min-height: 55vh;
+    resize: vertical;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    line-height: 1.55;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.75rem;
+  }
+  #output:focus {
+    outline: 2px solid var(--sage);
+    outline-offset: 1px;
+    border-color: var(--sage);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1 class="app-title">Json<span class="app-title-accent">Converter</span></h1>
+    <p class="tagline">Turns a JSON backup into readable markdown, entirely in your browser.</p>
+  </header>
+
+  <!-- Drop zone doubles as the file picker: click it or drop a file on it -->
+  <div class="dropzone" id="dropzone">
+    <p class="dropzone-title">Drop a JSON file here</p>
+    <p class="dropzone-hint">or click to choose one</p>
+    <p class="dropzone-privacy">Nothing is uploaded or saved. The file is read locally and forgotten on reload.</p>
+  </div>
+  <input type="file" id="file-input" accept=".json,application/json" hidden>
+
+  <div class="error" id="error" hidden></div>
+
+  <section class="result" id="result" hidden>
+    <div class="badge-row">
+      <span class="badge" id="badge"></span>
+      <span class="badge-file" id="badge-file"></span>
+    </div>
+    <p class="notice" id="notice" hidden></p>
+    <div class="output-card">
+      <div class="toolbar">
+        <button class="btn primary" id="copy-btn">Copy markdown</button>
+        <button class="btn" id="download-btn">Download .md</button>
+      </div>
+      <textarea id="output" readonly spellcheck="false" aria-label="Markdown output"></textarea>
+    </div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Renderer registry.
+   Each renderer has a name, a detect(json) that checks the
+   structure, and a render(json) that returns markdown.
+   The list is walked in order and the first match wins.
+   The generic fallback is always last and always matches, so
+   every valid JSON file produces some output.
+   Specific renderers (v2) get inserted ABOVE the generic one.
+   ============================================================ */
+
+const renderers = [
+  {
+    name: "Generic fallback",
+    detect: function () { return true; },
+    render: renderGeneric,
+  },
+];
+
+/* ============================================================
+   Generic renderer.
+   Produces acceptable markdown from any valid JSON without
+   knowing the schema. Rules:
+   - top-level object keys become ## headings; scalar values
+     become "**key:** value" lines instead
+   - arrays of objects become ### sub-sections (or a small
+     table when every element is flat and shares few keys)
+   - nested structures become indented lists, four levels deep;
+     anything deeper is shown as a fenced JSON block
+   - keys named id/schemaVersion and empty values are skipped
+     (the schema version is already shown in the badge)
+   ============================================================ */
+
+const MAX_DEPTH = 4;
+const SKIP_KEYS = ["id", "schemaVersion"];
+const TITLE_FIELDS = ["title", "name", "statement", "text", "question"];
+
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isScalar(value) {
+  const t = typeof value;
+  return value === null || t === "string" || t === "number" || t === "boolean";
+}
+
+function isEmpty(value) {
+  if (value === null || value === undefined || value === "") return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  if (isPlainObject(value) && Object.keys(value).length === 0) return true;
+  return false;
+}
+
+/* Object entries worth rendering: no bookkeeping keys, no empty values */
+function keptEntries(obj) {
+  return Object.entries(obj).filter(function (pair) {
+    return !SKIP_KEYS.includes(pair[0]) && !isEmpty(pair[1]);
+  });
+}
+
+function fencedJson(value) {
+  return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
+}
+
+/* One "**key:** value" line; multi-line strings get their own paragraph */
+function scalarLine(key, value) {
+  const text = String(value);
+  if (text.includes("\n")) {
+    return "**" + key + ":**\n\n" + text;
+  }
+  return "**" + key + ":** " + text;
+}
+
+/* Nested objects and arrays as an indented list. Depth is counted
+   from the top of the document; past MAX_DEPTH we fall back to a
+   fenced JSON block rather than an unreadable deep list. */
+function nestedList(value, depth, indent) {
+  if (depth > MAX_DEPTH) {
+    return [fencedJson(value)];
+  }
+  const pad = "  ".repeat(indent);
+  const lines = [];
+
+  if (Array.isArray(value)) {
+    value.forEach(function (item, i) {
+      if (isEmpty(item) && item !== null) return;
+      if (isScalar(item)) {
+        lines.push(pad + "- " + String(item));
+      } else if (Array.isArray(item)) {
+        lines.push(pad + "- (list)");
+        lines.push.apply(lines, nestedList(item, depth + 1, indent + 1));
+      } else {
+        const title = pickTitle(item);
+        lines.push(pad + "- " + (title !== null ? title : "item " + (i + 1)));
+        lines.push.apply(lines, objectListLines(item, depth + 1, indent + 1, title));
+      }
+    });
+    return lines;
+  }
+
+  if (isPlainObject(value)) {
+    return objectListLines(value, depth, indent, null);
+  }
+
+  lines.push(pad + "- " + String(value));
+  return lines;
+}
+
+/* An object's fields as list items at the given indent level.
+   usedTitle is a title value already shown one level up, so it
+   is not repeated. */
+function objectListLines(obj, depth, indent, usedTitle) {
+  const pad = "  ".repeat(indent);
+  const lines = [];
+  keptEntries(obj).forEach(function (pair) {
+    const key = pair[0];
+    const value = pair[1];
+    if (usedTitle !== null && String(value) === usedTitle && TITLE_FIELDS.includes(key)) return;
+    if (isScalar(value)) {
+      lines.push(pad + "- **" + key + ":** " + String(value).replace(/\n/g, " "));
+    } else if (Array.isArray(value) && value.every(isScalar)) {
+      lines.push(pad + "- **" + key + ":** " + value.map(String).join(", "));
+    } else {
+      if (depth + 1 > MAX_DEPTH) {
+        lines.push(pad + "- **" + key + ":**");
+        lines.push(fencedJson(value));
+      } else {
+        lines.push(pad + "- **" + key + ":**");
+        lines.push.apply(lines, nestedList(value, depth + 1, indent + 1));
+      }
+    }
+  });
+  return lines;
+}
+
+/* First likely title field with a usable scalar value, or null.
+   Long values are shortened so a full quote never becomes a heading;
+   the full value still renders as a normal field in that case. */
+function pickTitle(obj) {
+  for (const field of TITLE_FIELDS) {
+    const value = obj[field];
+    if (isScalar(value) && !isEmpty(value)) {
+      let title = String(value).split("\n")[0];
+      if (title.length > 60) {
+        title = title.slice(0, 60).replace(/\s+\S*$/, "") + "…";
+      }
+      return title;
+    }
+  }
+  return null;
+}
+
+/* A table is used when every element is a flat object (scalar
+   fields only, after skipping bookkeeping and empty values) and
+   the elements share five or fewer distinct keys. */
+function tableEligible(arr) {
+  if (arr.length < 2) return false;
+  const keys = new Set();
+  for (const item of arr) {
+    if (!isPlainObject(item)) return false;
+    for (const pair of keptEntries(item)) {
+      if (!isScalar(pair[1])) return false;
+      keys.add(pair[0]);
+    }
+  }
+  return keys.size > 0 && keys.size <= 5;
+}
+
+function tableCell(value) {
+  if (value === undefined || value === null) return "";
+  return String(value).replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function renderTable(arr) {
+  const keys = [];
+  arr.forEach(function (item) {
+    keptEntries(item).forEach(function (pair) {
+      if (!keys.includes(pair[0])) keys.push(pair[0]);
+    });
+  });
+  const lines = [];
+  lines.push("| " + keys.join(" | ") + " |");
+  lines.push("| " + keys.map(function () { return "---"; }).join(" | ") + " |");
+  arr.forEach(function (item) {
+    lines.push("| " + keys.map(function (k) { return tableCell(item[k]); }).join(" | ") + " |");
+  });
+  return lines.join("\n");
+}
+
+/* An array of objects as ### sub-sections, one per element */
+function renderObjectArray(arr, depth) {
+  const blocks = [];
+  arr.forEach(function (item, i) {
+    if (!isPlainObject(item)) {
+      blocks.push(isScalar(item) ? "- " + String(item) : nestedList(item, depth, 0).join("\n"));
+      return;
+    }
+    const title = pickTitle(item);
+    const lines = ["### " + (title !== null ? title : "Item " + (i + 1))];
+    keptEntries(item).forEach(function (pair) {
+      const key = pair[0];
+      const value = pair[1];
+      /* Skip a field only when the heading already shows all of it */
+      if (title !== null && TITLE_FIELDS.includes(key) && String(value) === title) return;
+      if (isScalar(value)) {
+        lines.push("");
+        lines.push(scalarLine(key, value));
+      } else if (Array.isArray(value) && value.every(isScalar)) {
+        lines.push("");
+        lines.push("**" + key + ":** " + value.map(String).join(", "));
+      } else {
+        lines.push("");
+        lines.push("**" + key + ":**");
+        lines.push("");
+        lines.push(nestedList(value, depth + 1, 0).join("\n"));
+      }
+    });
+    blocks.push(lines.join("\n"));
+  });
+  return blocks.join("\n\n");
+}
+
+/* An array value sitting under a ## heading */
+function renderArrayValue(arr, depth) {
+  if (arr.every(isScalar)) {
+    return arr.map(function (item) { return "- " + String(item); }).join("\n");
+  }
+  if (arr.every(isPlainObject)) {
+    if (tableEligible(arr)) return renderTable(arr);
+    return renderObjectArray(arr, depth);
+  }
+  return nestedList(arr, depth, 0).join("\n");
+}
+
+function renderGeneric(json) {
+  /* Top-level scalar: just print it */
+  if (isScalar(json)) {
+    return String(json);
+  }
+
+  /* Top-level array: render it directly, no heading needed */
+  if (Array.isArray(json)) {
+    if (json.length === 0) return "(empty list)";
+    return renderArrayValue(json, 1);
+  }
+
+  /* Top-level object: scalar fields first as key/value lines,
+     then each complex field as its own ## section */
+  const scalars = [];
+  const sections = [];
+  keptEntries(json).forEach(function (pair) {
+    const key = pair[0];
+    const value = pair[1];
+    if (isScalar(value)) {
+      scalars.push(scalarLine(key, value));
+    } else if (Array.isArray(value)) {
+      sections.push("## " + key + "\n\n" + renderArrayValue(value, 2));
+    } else {
+      sections.push("## " + key + "\n\n" + nestedList(value, 2, 0).join("\n"));
+    }
+  });
+
+  const parts = [];
+  if (scalars.length > 0) parts.push(scalars.join("\n"));
+  if (sections.length > 0) parts.push(sections.join("\n\n"));
+  if (parts.length === 0) return "(nothing to show: the file contains no renderable values)";
+  return parts.join("\n\n") + "\n";
+}
+
+/* ============================================================
+   Conversion: walk the registry, first detect() match wins.
+   A renderer that throws falls through to the next one, so a
+   broken specific renderer can never take the tool down.
+   ============================================================ */
+
+function convert(json) {
+  let notice = "";
+  for (const renderer of renderers) {
+    let matched = false;
+    try { matched = renderer.detect(json); } catch (e) { matched = false; }
+    if (!matched) continue;
+    try {
+      return { name: renderer.name, markdown: renderer.render(json), notice: notice };
+    } catch (e) {
+      notice = "The " + renderer.name + " renderer hit a problem, so the generic fallback was used instead.";
+    }
+  }
+  /* Last resort: even if the generic renderer somehow failed,
+     show the JSON itself rather than nothing */
+  return { name: "Generic fallback", markdown: fencedJson(json), notice: notice };
+}
+
+/* ============================================================
+   UI wiring
+   ============================================================ */
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("file-input");
+const errorBox = document.getElementById("error");
+const resultSection = document.getElementById("result");
+const badge = document.getElementById("badge");
+const badgeFile = document.getElementById("badge-file");
+const noticeBox = document.getElementById("notice");
+const output = document.getElementById("output");
+const copyBtn = document.getElementById("copy-btn");
+const downloadBtn = document.getElementById("download-btn");
+
+let currentFilename = "";
+
+function showError(message) {
+  errorBox.textContent = message;
+  errorBox.hidden = false;
+  resultSection.hidden = true;
+}
+
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onerror = function () {
+    showError("The file could not be read. Try choosing it again.");
+  };
+  reader.onload = function () {
+    let json;
+    try {
+      json = JSON.parse(reader.result);
+    } catch (e) {
+      showError("That does not look like valid JSON. Check that you picked an export file from one of the tools and try again.");
+      return;
+    }
+
+    const result = convert(json);
+
+    /* Badge: which renderer matched, plus the schema version when present */
+    let badgeText = "Detected: " + result.name;
+    if (isPlainObject(json) && (typeof json.schemaVersion === "number" || typeof json.schemaVersion === "string")) {
+      badgeText += " (schema v" + json.schemaVersion + ")";
+    }
+    badge.textContent = badgeText;
+    badgeFile.textContent = file.name;
+    noticeBox.textContent = result.notice;
+    noticeBox.hidden = result.notice === "";
+
+    output.value = result.markdown;
+    currentFilename = file.name;
+    errorBox.hidden = true;
+    resultSection.hidden = false;
+  };
+  reader.readAsText(file);
+}
+
+/* Click the zone (or press Enter/Space on it) to open the picker */
+dropzone.addEventListener("click", function () { fileInput.click(); });
+dropzone.setAttribute("tabindex", "0");
+dropzone.setAttribute("role", "button");
+dropzone.setAttribute("aria-label", "Choose a JSON file");
+dropzone.addEventListener("keydown", function (event) {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    fileInput.click();
+  }
+});
+
+fileInput.addEventListener("change", function () {
+  handleFile(fileInput.files[0]);
+  /* Reset so choosing the same file again still fires a change event */
+  fileInput.value = "";
+});
+
+/* Drag and drop */
+dropzone.addEventListener("dragover", function (event) {
+  event.preventDefault();
+  dropzone.classList.add("dragging");
+});
+dropzone.addEventListener("dragleave", function () {
+  dropzone.classList.remove("dragging");
+});
+dropzone.addEventListener("drop", function (event) {
+  event.preventDefault();
+  dropzone.classList.remove("dragging");
+  const file = event.dataTransfer.files && event.dataTransfer.files[0];
+  handleFile(file);
+});
+
+/* Copy: clipboard API works on GitHub Pages (HTTPS secure context) */
+copyBtn.addEventListener("click", function () {
+  navigator.clipboard.writeText(output.value).then(function () {
+    const original = copyBtn.textContent;
+    copyBtn.textContent = "Copied";
+    setTimeout(function () { copyBtn.textContent = original; }, 1500);
+  }).catch(function () {
+    /* Fallback for older browsers or non-secure contexts:
+       select the text so a manual copy is one keystroke away */
+    output.focus();
+    output.select();
+    copyBtn.textContent = "Press Cmd+C to copy";
+    setTimeout(function () { copyBtn.textContent = "Copy markdown"; }, 2500);
+  });
+});
+
+/* Download: same name as the input file, with .md instead of .json.
+   Browsers always save to the default download folder; the page
+   cannot choose the location. */
+downloadBtn.addEventListener("click", function () {
+  let name = "converted.md";
+  if (currentFilename) {
+    name = /\.json$/i.test(currentFilename)
+      ? currentFilename.replace(/\.json$/i, ".md")
+      : currentFilename + ".md";
+  }
+  const blob = new Blob([output.value], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
