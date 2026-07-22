@@ -291,6 +291,16 @@ const renderers = [
     render: renderSkillTree,
   },
   {
+    name: "What should I wear?",
+    detect: function (json) {
+      const w = firstItem(json, "wardrobe");
+      if (w !== null && "zone" in w) return true;
+      const r = firstItem(json, "runs");
+      return r !== null && "outfit" in r && "conditions" in r;
+    },
+    render: renderWhatToWear,
+  },
+  {
     name: "Generic fallback",
     detect: function () { return true; },
     render: renderGeneric,
@@ -827,6 +837,115 @@ function renderSkillTree(json) {
   });
   if (blocks.length === 0) return "# Skill Tree\n";
   return blocks.join("\n\n") + "\n";
+}
+
+/* Body zones in the order they sit on you, head to foot, with
+   friendly labels; unknown zones fall back to words() and sort
+   to the end. verdict is warmth feedback centred on 0 = ideal. */
+const WEAR_ZONES = [
+  ["head", "Head"],
+  ["neck", "Neck"],
+  ["torsoBase", "Torso — base layer"],
+  ["torsoMid", "Torso — mid layer"],
+  ["torsoShell", "Torso — shell"],
+  ["hands", "Hands"],
+  ["legs", "Legs"],
+  ["socks", "Socks"],
+  ["extras", "Extras"],
+];
+const WEAR_VERDICTS = {
+  "-2": "Much too cold", "-1": "Too cold", "0": "Just right",
+  "1": "Too warm", "2": "Much too warm",
+};
+
+function renderWhatToWear(json) {
+  const lines = ["# What should I wear?"];
+
+  const settings = isPlainObject(json.settings) ? json.settings : {};
+  if (str(settings.locationLabel)) {
+    lines.push("");
+    lines.push("Location: " + str(settings.locationLabel));
+  }
+
+  /* Wardrobe: id-to-name map for resolving outfits, and the active
+     items grouped by zone. Archived items are left out on purpose. */
+  const wardrobe = (Array.isArray(json.wardrobe) ? json.wardrobe : []).filter(isPlainObject);
+  const nameById = {};
+  wardrobe.forEach(function (w) { if (str(w.id)) nameById[w.id] = str(w.name); });
+
+  const active = wardrobe.filter(function (w) { return w.archived !== true && str(w.name); });
+  if (active.length > 0) {
+    lines.push("");
+    lines.push("## Wardrobe");
+    const order = WEAR_ZONES.map(function (z) { return z[0]; });
+    const labels = {};
+    WEAR_ZONES.forEach(function (z) { labels[z[0]] = z[1]; });
+    /* Keep zones in body order first, then any unknown zones as they appear */
+    const zones = [];
+    active.forEach(function (w) {
+      const zone = str(w.zone) || "other";
+      if (!zones.includes(zone)) zones.push(zone);
+    });
+    zones.sort(function (a, b) {
+      const ia = order.indexOf(a), ib = order.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    zones.forEach(function (zone) {
+      const items = active
+        .filter(function (w) { return (str(w.zone) || "other") === zone; })
+        .map(function (w) { return str(w.name); });
+      if (items.length === 0) return;
+      const label = labels[zone] || words(zone) || "Other";
+      lines.push("");
+      lines.push("**" + label + ":** " + items.join(", "));
+    });
+  }
+
+  /* Run log, most recent first */
+  const runs = (Array.isArray(json.runs) ? json.runs : []).filter(isPlainObject)
+    .slice()
+    .sort(function (a, b) { return str(b.date).localeCompare(str(a.date)); });
+  if (runs.length > 0) {
+    lines.push("");
+    lines.push("## Run log");
+    runs.forEach(function (run) {
+      let heading = str(run.date) ? dateOnly(run.date) : "Run";
+      if (str(run.timeOfDay)) heading += " — " + words(run.timeOfDay);
+      lines.push("");
+      lines.push("### " + heading);
+      lines.push("");
+
+      const c = isPlainObject(run.conditions) ? run.conditions : {};
+      const cparts = [];
+      if (typeof c.tempC === "number") cparts.push(c.tempC + "°C");
+      if (typeof c.windMs === "number") cparts.push("wind " + c.windMs + " m/s");
+      if (str(c.precip)) cparts.push(c.precip === "none" ? "no precipitation" : words(c.precip));
+      if (cparts.length > 0) lines.push("- Conditions: " + cparts.join(", "));
+
+      if (str(run.intensity)) lines.push("- Intensity: " + words(run.intensity));
+
+      let outfit = [];
+      if (Array.isArray(run.outfitNames) && run.outfitNames.some(function (n) { return str(n); })) {
+        outfit = run.outfitNames.filter(function (n) { return str(n); }).map(str);
+      } else if (Array.isArray(run.outfit)) {
+        outfit = run.outfit.map(function (id) { return nameById[id]; }).filter(Boolean);
+      }
+      if (outfit.length > 0) lines.push("- Outfit: " + outfit.join(", "));
+
+      if (typeof run.verdict === "number") {
+        lines.push("- Verdict: " + (WEAR_VERDICTS[String(run.verdict)] || String(run.verdict)));
+      }
+
+      if (Array.isArray(run.zoneFlags) && run.zoneFlags.length > 0) {
+        const flags = run.zoneFlags.filter(function (f) { return str(f); }).map(words);
+        if (flags.length > 0) lines.push("- Flagged: " + flags.join(", "));
+      }
+
+      if (str(run.note)) { lines.push(""); lines.push(str(run.note)); }
+    });
+  }
+
+  return lines.join("\n") + "\n";
 }
 
 /* ============================================================
